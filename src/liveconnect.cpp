@@ -10,11 +10,46 @@ namespace liveconnect {
 
 namespace {
 
+// Newest installed driver wins; hardcoding one that is absent yields a
+// cryptic IM00. Falls back to legacy "SQL Server", then 18.
+const std::string& sql_server_driver() {
+    static const std::string driver = [] {
+        const std::string prefix = "ODBC Driver ";
+        const std::string suffix = " for SQL Server";
+        std::string best;
+        int best_ver = -1;
+        bool have_legacy = false;
+        try {
+            for (const auto& d : nanodbc::list_drivers()) {
+                const std::string& name = d.name;
+                if (name == "SQL Server") { have_legacy = true; continue; }
+                if (name.size() <= prefix.size() + suffix.size()) continue;
+                if (name.compare(0, prefix.size(), prefix) != 0) continue;
+                if (name.compare(name.size() - suffix.size(), suffix.size(),
+                                 suffix) != 0)
+                    continue;
+                const std::string mid = name.substr(
+                    prefix.size(),
+                    name.size() - prefix.size() - suffix.size());
+                bool numeric = !mid.empty();
+                for (char c : mid)
+                    if (c < '0' || c > '9') { numeric = false; break; }
+                if (!numeric) continue;
+                int ver = std::atoi(mid.c_str());
+                if (ver > best_ver) { best_ver = ver; best = name; }
+            }
+        } catch (...) {
+        }
+        if (best_ver >= 0) return best;
+        if (have_legacy) return std::string("SQL Server");
+        return std::string("ODBC Driver 18 for SQL Server");
+    }();
+    return driver;
+}
+
 std::string build_conn_string(const LiveConnectParams& p) {
     std::ostringstream s;
-    // Driver 18 is MS's current driver on Linux and Windows. Users
-    // on older drivers will need to adjust.
-    s << "Driver={ODBC Driver 18 for SQL Server};";
+    s << "Driver={" << sql_server_driver() << "};";
     s << "Server=" << p.server << ";";
     if (!p.database.empty()) s << "Database=" << p.database << ";";
     if (p.auth == LiveAuth::Integrated) {
